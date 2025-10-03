@@ -1,92 +1,116 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-from io import BytesIO
 import altair as alt
+from io import BytesIO
 
+# --- Настройки страницы ---
 st.set_page_config(page_title="Amiri Forecasting UI", layout="wide")
 
-# 🔹 Заголовок
+# --- Заголовок ---
 st.markdown(
     """
-    <h1 style='text-align: center; color: #FF4B4B; font-size: 48px;'>
-        🍬 Amiri Forecasting UI
+    <h1 style='text-align: center; color: #FF4B4B; font-size: 42px;'>
+        🍬 Amiri Forecasting Dashboard
     </h1>
     <p style='text-align: center; color: gray; font-size:18px;'>
-        Анализ прогноза vs факта по спросу на конфеты
+        Факт vs Прогноз продаж конфет + Метрики модели
     </p>
     """,
     unsafe_allow_html=True,
 )
 
+
+# --- Загружаем данные ---
+@st.cache_data
+def load_data():
+    forecast_df = pd.read_excel("forecast_data.xlsx")
+    metrics_df = pd.read_excel("model_metrics.xlsx")
+    return forecast_df, metrics_df
+
+
+forecast_df, metrics_df = load_data()
+
 # --- Фильтры ---
-st.sidebar.header("📅 Фильтр дат")
-start_date = st.sidebar.date_input("Начальная дата")
-end_date = st.sidebar.date_input("Конечная дата")
+st.sidebar.header("🔍 Фильтры")
+products = forecast_df["product_name"].dropna().unique().tolist()
+regions = forecast_df["region"].dropna().unique().tolist()
 
-# --- Генерация данных ---
-if st.sidebar.button("🔮 Сгенерировать прогноз (синтетика)"):
-    dates = pd.date_range(start_date, end_date)
-    forecast = np.random.randint(100, 200, size=len(dates))
-    actual = forecast + np.random.randint(-10, 10, size=len(dates))
+product = st.sidebar.selectbox("Выберите продукт:", products)
+region = st.sidebar.selectbox("Выберите регион:", regions)
+days = st.sidebar.slider("Горизонт прогноза (дней)", 1, 90, 30)
 
-    df = pd.DataFrame({"date": dates, "forecast": forecast, "actual": actual})
+# --- Фильтрация данных ---
+df_filtered = forecast_df[
+    (forecast_df["product_name"] == product) & (forecast_df["region"] == region)
+].copy()
 
-    # сохраняем данные в session_state
-    st.session_state["forecast_data"] = df
+df_filtered = df_filtered.sort_values("date")
+if len(df_filtered) > days:
+    df_filtered = df_filtered.tail(days)
 
-# --- Проверка: есть ли данные ---
-if "forecast_data" in st.session_state:
-    df = st.session_state["forecast_data"]
+# --- График ---
+st.subheader(f"📊 Прогноз vs Факт: {product} ({region})")
 
-    # --- График ---
-    st.subheader("📊 Прогноз vs Факт")
-    df_melted = df.melt("date", var_name="Показатель", value_name="Значение")
+df_melted = df_filtered.melt(
+    "date", value_vars=["y", "yhat"], var_name="Показатель", value_name="Значение"
+)
 
-    chart = (
-        alt.Chart(df_melted)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("date:T", title="Дата"),
-            y=alt.Y("Значение:Q", title="Количество"),
-            color=alt.Color("Показатель:N", legend=alt.Legend(title="Линии")),
-            tooltip=["date:T", "Показатель:N", "Значение:Q"],
-        )
-        .properties(width=900, height=400)
-        .interactive()
+chart = (
+    alt.Chart(df_melted)
+    .mark_line(point=True)
+    .encode(
+        x=alt.X("date:T", title="Дата"),
+        y=alt.Y("Значение:Q", title="Продажи"),
+        color=alt.Color("Показатель:N", legend=alt.Legend(title="Линии")),
+        tooltip=["date:T", "Показатель:N", "Значение:Q"],
     )
-    st.altair_chart(chart, use_container_width=True)
+    .properties(width=900, height=400)
+    .interactive()
+)
 
-    # --- Таблица ---
-    st.subheader("📋 Таблица прогнозов")
-    table_style = st.radio(
-        "Выберите стиль таблицы:",
-        ("Обычная", "С градиентной подсветкой"),
-        horizontal=True,
+# Если есть интервалы прогноза, нарисуем "полосу"
+if "yhat_lower" in df_filtered.columns and "yhat_upper" in df_filtered.columns:
+    band = (
+        alt.Chart(df_filtered)
+        .mark_area(opacity=0.2, color="orange")
+        .encode(x="date:T", y="yhat_lower:Q", y2="yhat_upper:Q")
     )
+    chart = band + chart
 
-    if table_style == "Обычная":
-        st.dataframe(df, use_container_width=True)
-    else:
-        styled_df = df.style.background_gradient(cmap="YlGnBu")
-        st.dataframe(styled_df, use_container_width=True)
+st.altair_chart(chart, use_container_width=True)
 
-    # --- Скачать CSV ---
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "📥 Скачать CSV", data=csv, file_name="forecast.csv", mime="text/csv"
-    )
+# --- Таблица данных ---
+st.subheader("📋 Таблица прогнозов")
+styled_df = df_filtered.style.background_gradient(cmap="YlGnBu")
+st.dataframe(styled_df, use_container_width=True)
 
-    # --- Скачать Excel ---
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Forecast")
-    st.download_button(
-        "📊 Скачать Excel",
-        data=output.getvalue(),
-        file_name="forecast.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+# --- Скачать CSV ---
+csv = df_filtered.to_csv(index=False).encode("utf-8")
+st.download_button(
+    "📥 Скачать CSV",
+    data=csv,
+    file_name=f"{product}_{region}_forecast.csv",
+    mime="text/csv",
+)
 
+# --- Скачать Excel ---
+output = BytesIO()
+with pd.ExcelWriter(output, engine="openpyxl") as writer:
+    df_filtered.to_excel(writer, index=False, sheet_name="Forecast")
+st.download_button(
+    "📊 Скачать Excel",
+    data=output.getvalue(),
+    file_name=f"{product}_{region}_forecast.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
+
+# --- Таблица метрик ---
+st.subheader("📈 Метрики модели")
+metrics_filtered = metrics_df[
+    (metrics_df["product_name"] == product) & (metrics_df["region"] == region)
+]
+
+if not metrics_filtered.empty:
+    st.dataframe(metrics_filtered, use_container_width=True)
 else:
-    st.info("👈 Выберите даты и нажмите кнопку в боковой панели для генерации прогноза")
+    st.info("Для выбранных продукта и региона метрики пока отсутствуют.")
