@@ -9,6 +9,7 @@ import io
 # ==========================
 # Генерация синтетических данных
 # ==========================
+@st.cache_data
 def generate_data(n_fact_days=60, n_forecast_days=30):
     products = ["Candy A", "Candy B", "Candy C"]
     regions = ["north", "south"]
@@ -46,6 +47,7 @@ def generate_data(n_fact_days=60, n_forecast_days=30):
     return df
 
 
+@st.cache_data
 def generate_model_metrics():
     rows = []
     for product in ["Candy A", "Candy B", "Candy C"]:
@@ -122,22 +124,34 @@ with tab1:
     else:
         today = datetime.today().date()
 
+        # Общие стили для осей
+        x_axis = alt.X(
+            "date:T",
+            title="📅 Дата",
+            axis=alt.Axis(labelFontSize=12, titleFontSize=14, titleColor="black"),
+        )
+        y_axis = alt.Y(
+            "y:Q",
+            title="📦 Продажи",
+            axis=alt.Axis(labelFontSize=12, titleFontSize=14, titleColor="black"),
+        )
+
         # Факт
         line_fact = (
             alt.Chart(filtered_df.dropna(subset=["y"]))
             .mark_line(color="steelblue")
-            .encode(
-                x=alt.X("date:T", title="Дата"),
-                y=alt.Y("y:Q", title="Продажи"),
-                tooltip=["date", "y"],
-            )
+            .encode(x=x_axis, y=y_axis, tooltip=["date", "y"])
         )
 
         # Прогноз
         line_forecast = (
             alt.Chart(filtered_df)
             .mark_line(color="orange", strokeDash=[5, 5])
-            .encode(x="date:T", y="yhat:Q", tooltip=["date", "yhat"])
+            .encode(
+                x="date:T",
+                y=alt.Y("yhat:Q", title="📦 Продажи"),
+                tooltip=["date", "yhat"],
+            )
         )
 
         # Интервал прогноза
