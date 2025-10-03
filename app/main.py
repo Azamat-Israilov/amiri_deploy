@@ -12,7 +12,7 @@ import io
 @st.cache_data
 def generate_data(n_fact_days=60, n_forecast_days=30):
     products = ["Candy A", "Candy B", "Candy C"]
-    regions = ["north", "south"]
+    regions = ["north", "south", "east", "west"]
 
     today = datetime.today().date()
     fact_dates = pd.date_range(today - timedelta(days=n_fact_days), periods=n_fact_days)
@@ -124,16 +124,26 @@ with tab1:
     else:
         today = datetime.today().date()
 
-        # Общие стили для осей
+        # Стили осей (чёткие подписи в тёмной теме)
         x_axis = alt.X(
             "date:T",
             title="📅 Дата",
-            axis=alt.Axis(labelFontSize=12, titleFontSize=14, titleColor="black"),
+            axis=alt.Axis(
+                labelFontSize=12,
+                titleFontSize=16,
+                titleColor="white",
+                labelColor="white",
+            ),
         )
         y_axis = alt.Y(
             "y:Q",
             title="📦 Продажи",
-            axis=alt.Axis(labelFontSize=12, titleFontSize=14, titleColor="black"),
+            axis=alt.Axis(
+                labelFontSize=12,
+                titleFontSize=16,
+                titleColor="white",
+                labelColor="white",
+            ),
         )
 
         # Факт
