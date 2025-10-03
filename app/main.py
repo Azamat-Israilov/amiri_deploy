@@ -11,7 +11,7 @@ import io
 # ==========================
 def generate_data(n_fact_days=60, n_forecast_days=30):
     products = ["Candy A", "Candy B", "Candy C"]
-    regions = ["north", "south", "east", "west"]
+    regions = ["north", "south"]
 
     today = datetime.today().date()
     fact_dates = pd.date_range(today - timedelta(days=n_fact_days), periods=n_fact_days)
