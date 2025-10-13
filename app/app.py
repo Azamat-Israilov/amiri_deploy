@@ -1,20 +1,17 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import altair as alt
 from datetime import datetime, timedelta
 import io
-from datetime import datetime
 import plotly.graph_objects as go
-import streamlit as st
 
 # ==========================
 # Генерация синтетических данных
 # ==========================
 @st.cache_data
-def generate_data(n_fact_days=60, n_forecast_days=30):
+def generate_data(n_fact_days=60, n_forecast_days=90):
     products = ["Candy A", "Candy B", "Candy C"]
-    regions = ["north", "south", "east", "west"]
+    regions = ["Север", "Юг", "Восток", "Запад"]
 
     today = datetime.today().date()
     fact_dates = pd.date_range(today - timedelta(days=n_fact_days), periods=n_fact_days)
@@ -29,57 +26,37 @@ def generate_data(n_fact_days=60, n_forecast_days=30):
                 yhat = y + np.random.randint(-5, 5)
                 rows.append([d, product, region, y, yhat, yhat - 10, yhat + 10])
 
-            # Прогнозные данные (факта нет)
+            # Прогнозные данные
             for d in forecast_dates:
                 yhat = np.random.randint(90, 140)
                 rows.append([d, product, region, None, yhat, yhat - 15, yhat + 15])
 
-    df = pd.DataFrame(
+    return pd.DataFrame(
         rows,
-        columns=[
-            "date",
-            "product_name",
-            "region",
-            "y",
-            "yhat",
-            "yhat_lower",
-            "yhat_upper",
-        ],
+        columns=["date", "product_name", "region", "y", "yhat", "yhat_lower", "yhat_upper"],
     )
-    return df
-
-
 
 
 @st.cache_data
 def generate_model_metrics():
     rows = []
     for product in ["Candy A", "Candy B", "Candy C"]:
-        for region in ["north", "south", "east", "west"]:
+        for region in ["Север", "Юг", "Восток", "Запад"]:
             rows.append(
                 [
                     "prophet",
-                    np.round(np.random.uniform(5, 10), 2),  # mae
-                    np.round(np.random.uniform(7, 12), 2),  # rmse
-                    np.round(np.random.uniform(1, 3), 2),  # wape
-                    np.round(np.random.uniform(15, 30), 2),  # summ_error_3month
+                    np.round(np.random.uniform(5, 10), 2),
+                    np.round(np.random.uniform(7, 12), 2),
+                    np.round(np.random.uniform(1, 3), 2),
+                    np.round(np.random.uniform(15, 30), 2),
                     product,
                     region,
                 ]
             )
-    df = pd.DataFrame(
+    return pd.DataFrame(
         rows,
-        columns=[
-            "model_name",
-            "mae",
-            "rmse",
-            "wape",
-            "summ_error_3month",
-            "product_name",
-            "region",
-        ],
+        columns=["model_name", "mae", "rmse", "wape", "summ_error_3month", "product_name", "region"],
     )
-    return df
 
 
 # ==========================
@@ -100,80 +77,92 @@ forecast_df = generate_data()
 metrics_df = generate_model_metrics()
 
 # ==========================
-# Фильтры (sidebar)
+# Фильтры
 # ==========================
 st.sidebar.header("Фильтры")
-
 product = st.sidebar.selectbox("Выберите продукт", forecast_df["product_name"].unique())
 region = st.sidebar.selectbox("Выберите регион", forecast_df["region"].unique())
 horizon = st.sidebar.slider("Горизонт прогноза (дней)", 30, 90, 30)
 
+# Отбираем нужный продукт и регион
 filtered_df = forecast_df[
     (forecast_df["product_name"] == product) & (forecast_df["region"] == region)
 ].copy()
 
-# Ограничиваем горизонтом
-filtered_df = filtered_df.sort_values("date").tail(horizon)
+today = datetime.today().date()
+fact_data = filtered_df[filtered_df["date"].dt.date <= today]
+forecast_data = filtered_df[
+    (filtered_df["date"].dt.date > today) &
+    (filtered_df["date"].dt.date <= today + timedelta(days=horizon))
+]
+
+# Объединяем их обратно для графика (единая шкала)
+filtered_df = pd.concat([fact_data, forecast_data]).sort_values("date")
 
 # ==========================
 # Вкладки
 # ==========================
 tab1, tab2 = st.tabs(["Прогноз vs Факт", "Метрики модели"])
 
+# ==========================
+# Вкладка 1 — Прогноз vs Факт
+# ==========================
 with tab1:
     st.subheader(f"Прогноз vs Факт для {product} ({region})")
 
     if filtered_df.empty:
         st.warning("Нет данных для выбранных фильтров.")
     else:
-        today = datetime.today().date()
+        today = pd.Timestamp(datetime.today().date())
 
-        # Стили осей (чёткие подписи в тёмной теме)
-    # Предполагается, что переменные:
-    # filtered_df, product, region — уже определены ранее
+        fact_data = filtered_df[filtered_df["date"] <= today].dropna(subset=["y"])
 
-        today = datetime.today().date()
+        show_forecast = horizon != 30
 
-        # Создаем фигуру
+        forecast_all = filtered_df.dropna(subset=["yhat"]).copy()
+        if show_forecast:
+            max_forecast_date = today + pd.Timedelta(days=horizon)
+            forecast_vis = forecast_all[forecast_all["date"] <= max_forecast_date]
+        else:
+            forecast_vis = pd.DataFrame(columns=forecast_all.columns)
+
         fig = go.Figure()
 
-        # Фактические данные
-        actual_data = filtered_df.dropna(subset=["y"])
-        if not actual_data.empty:
+        # Факт (всегда)
+        if not fact_data.empty:
             fig.add_trace(
                 go.Scatter(
-                    x=actual_data["date"],
-                    y=actual_data["y"],
+                    x=fact_data["date"],
+                    y=fact_data["y"],
                     mode="lines+markers",
                     name="Факт",
                     line=dict(color="#1f77b4", width=3),
                     marker=dict(size=4),
-                    hovertemplate="<b>Дата:</b> %{x}<br><b>Продажи (факт):</b> %{y}<extra></extra>",
+                    hovertemplate="<b>Дата:</b> %{x|%d %b %Y}<br><b>Продажи (факт):</b> %{y:.0f}<extra></extra>",
                 )
             )
 
-        # Прогнозные данные
-        forecast_data = filtered_df.dropna(subset=["yhat"])
-        if not forecast_data.empty:
+        # Прогноз (наложение на прошлое + будущее до горизонта)
+        if show_forecast and not forecast_vis.empty:
             fig.add_trace(
                 go.Scatter(
-                    x=forecast_data["date"],
-                    y=forecast_data["yhat"],
+                    x=forecast_vis["date"],
+                    y=forecast_vis["yhat"],
                     mode="lines+markers",
                     name="Прогноз",
                     line=dict(color="#ff7f0e", width=3, dash="dash"),
                     marker=dict(size=4),
-                    hovertemplate="<b>Дата:</b> %{x}<br><b>Продажи (прогноз):</b> %{y}<extra></extra>",
+                    hovertemplate="<b>Дата:</b> %{x|%d %b %Y}<br><b>Продажи (прогноз):</b> %{y:.0f}<extra></extra>",
                 )
             )
 
-            # Доверительный интервал
-            ci_data = forecast_data.dropna(subset=["yhat_lower", "yhat_upper"])
-            if not ci_data.empty:
+            # Доверительный интервал (там, где есть границы)
+            ci = forecast_vis.dropna(subset=["yhat_lower", "yhat_upper"])
+            if not ci.empty:
                 fig.add_trace(
                     go.Scatter(
-                        x=ci_data["date"],
-                        y=ci_data["yhat_upper"],
+                        x=ci["date"],
+                        y=ci["yhat_upper"],
                         mode="lines",
                         line=dict(width=0),
                         showlegend=False,
@@ -182,8 +171,8 @@ with tab1:
                 )
                 fig.add_trace(
                     go.Scatter(
-                        x=ci_data["date"],
-                        y=ci_data["yhat_lower"],
+                        x=ci["date"],
+                        y=ci["yhat_lower"],
                         mode="lines",
                         line=dict(width=0),
                         fill="tonexty",
@@ -193,7 +182,20 @@ with tab1:
                     )
                 )
 
-        # Настройки оформления
+        # Вертикальная линия "Сегодня"
+        fig.add_shape(
+            type="line",
+            x0=today, x1=today,
+            y0=0, y1=1,
+            xref="x", yref="paper",
+            line=dict(color="gray", width=2, dash="dot"),
+        )
+        fig.add_annotation(
+            x=today, y=1, xref="x", yref="paper",
+            text="Сегодня", showarrow=False, yanchor="bottom",
+            font=dict(size=12, color="gray"),
+        )
+
         fig.update_layout(
             title=f"Прогноз vs Факт для {product} ({region})",
             xaxis_title="Дата",
@@ -201,38 +203,20 @@ with tab1:
             template="plotly_white",
             height=500,
             hovermode="x unified",
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            ),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             xaxis=dict(
-                title_font=dict(size=16, family="Arial", color="black"),
-                showgrid=True,
-                gridwidth=1,
-                gridcolor="lightgray",
+                showgrid=True, gridwidth=1, gridcolor="lightgray",
                 tickformat="%d %b",
                 range=[filtered_df["date"].min(), filtered_df["date"].max()],
                 nticks=8,
             ),
-            yaxis=dict(
-                title_font=dict(size=16, family="Arial", color="black"),
-                showgrid=True,
-                gridwidth=1,
-                gridcolor="lightgray",
-            ),
+            yaxis=dict(showgrid=True, gridwidth=1, gridcolor="lightgray"),
         )
 
-        # Отображение графика
         st.plotly_chart(fig, use_container_width=True)
-        # today = datetime.today().date()
-        # filtered_df["y"] = filtered_df.apply(
-        #     lambda row: row["y"] if pd.notna(row["y"]) and row["date"].date() <= today else np.nan,
-        #     axis=1
-        # )
 
+
+        # === Таблица и экспорт ===
         display_df = filtered_df.rename(
             columns={
                 "date": "Дата",
@@ -244,11 +228,10 @@ with tab1:
                 "yhat_upper": "Верхняя граница",
             }
         )
-        # Таблица
+
         st.subheader("Таблица прогнозов")
         st.dataframe(display_df, use_container_width=True)
 
-        # Скачивание CSV
         st.download_button(
             "Скачать CSV",
             data=filtered_df.to_csv(index=False).encode("utf-8"),
@@ -256,7 +239,6 @@ with tab1:
             mime="text/csv",
         )
 
-        # Скачивание Excel
         towrite = io.BytesIO()
         with pd.ExcelWriter(towrite, engine="xlsxwriter") as writer:
             filtered_df.to_excel(writer, index=False, sheet_name="Forecast")
@@ -269,10 +251,12 @@ with tab1:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+# ==========================
+# Вкладка 2 — Метрики модели
+# ==========================
 with tab2:
     st.subheader("Метрики модели")
 
-    # Фильтруем данные по продукту и региону
     metrics_filtered = metrics_df[
         (metrics_df["product_name"] == product) & (metrics_df["region"] == region)
     ].copy()
@@ -280,26 +264,15 @@ with tab2:
     if metrics_filtered.empty:
         st.warning("Нет метрик для выбранной комбинации.")
     else:
-        # === Переименовываем колонки ===
         metrics_display = metrics_filtered.rename(
             columns={
                 "model_name": "Модель",
                 "product_name": "Продукт",
                 "region": "Регион",
-                "summ_error_3month": "bias",  # меняем имя в самих данных
-            }
-        )
-
-        # Переводим заголовки для отображения (кроме mae, rmse, wape)
-        metrics_display = metrics_display.rename(
-            columns={
-                "Модель": "Модель",
-                "Продукт": "Продукт",
-                "Регион": "Регион",
+                "summ_error_3month": "Bias",
                 "mae": "MAE",
                 "rmse": "RMSE",
                 "wape": "WAPE",
-                "bias": "Bias",
             }
         )
 
@@ -307,9 +280,8 @@ with tab2:
 
         st.markdown("""
         **Пояснение метрик:**
-
-        - **MAE (Mean Absolute Error)** — показывает, насколько в среднем прогноз ошибается в единицах продаж.
-        - **RMSE (Root Mean Squared Error)** — среднеквадратичная ошибка: чем больше выбросы, тем выше значение.
-        - **WAPE (Weighted Absolute Percentage Error)** — взвешенная процентная ошибка, помогает понять, насколько прогноз близок к факту в относительном выражении.
-        - **Bias (смещение прогноза)** — отражает систематическую ошибку: положительное значение — прогноз переоценивает продажи, отрицательное — недооценивает.
+        - **MAE** — средняя абсолютная ошибка прогноза.
+        - **RMSE** — среднеквадратичная ошибка (чувствительная к выбросам).
+        - **WAPE** — относительная ошибка прогноза.
+        - **Bias** — положительное значение означает переоценку, отрицательное — недооценку продаж.
         """)
