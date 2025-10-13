@@ -108,7 +108,7 @@ tab1, tab2 = st.tabs(["Прогноз vs Факт", "Метрики модели
 # Вкладка 1 — Прогноз vs Факт
 # ==========================
 with tab1:
-    st.subheader(f"Прогноз vs Факт для {product} ({region})")
+    st.subheader(f"Прогнозируемые vs Фактические продажи для {product} ({region})")
 
     if filtered_df.empty:
         st.warning("Нет данных для выбранных фильтров.")
