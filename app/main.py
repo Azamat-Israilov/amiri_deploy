@@ -1,81 +1,28 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import altair as alt
-from datetime import datetime, timedelta
+import plotly.graph_objects as go
+from datetime import datetime
 import io
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.connection import test_connection
+from app.data_access import (
+    fetch_products_and_regions,
+    fetch_forecast_vs_actual,
+    fetch_metrics,
+)
 
 
 # ==========================
-# Генерация синтетических данных
+# Fallback data for demo purposes
 # ==========================
 @st.cache_data
-def generate_data(n_fact_days=60, n_forecast_days=30):
-    products = ["Candy A", "Candy B", "Candy C"]
-    regions = ["north", "south", "east", "west"]
-
-    today = datetime.today().date()
-    fact_dates = pd.date_range(today - timedelta(days=n_fact_days), periods=n_fact_days)
-    forecast_dates = pd.date_range(today + timedelta(days=1), periods=n_forecast_days)
-
-    rows = []
-    for product in products:
-        for region in regions:
-            # Фактические данные
-            for d in fact_dates:
-                y = np.random.randint(80, 150)
-                yhat = y + np.random.randint(-5, 5)
-                rows.append([d, product, region, y, yhat, yhat - 10, yhat + 10])
-
-            # Прогнозные данные (факта нет)
-            for d in forecast_dates:
-                yhat = np.random.randint(90, 140)
-                rows.append([d, product, region, None, yhat, yhat - 15, yhat + 15])
-
-    df = pd.DataFrame(
-        rows,
-        columns=[
-            "date",
-            "product_name",
-            "region",
-            "y",
-            "yhat",
-            "yhat_lower",
-            "yhat_upper",
-        ],
-    )
-    return df
-
-
-@st.cache_data
-def generate_model_metrics():
-    rows = []
-    for product in ["Candy A", "Candy B", "Candy C"]:
-        for region in ["north", "south", "east", "west"]:
-            rows.append(
-                [
-                    "prophet",
-                    np.round(np.random.uniform(5, 10), 2),  # mae
-                    np.round(np.random.uniform(7, 12), 2),  # rmse
-                    np.round(np.random.uniform(1, 3), 2),  # wape
-                    np.round(np.random.uniform(15, 30), 2),  # summ_error_3month
-                    product,
-                    region,
-                ]
-            )
-    df = pd.DataFrame(
-        rows,
-        columns=[
-            "model_name",
-            "mae",
-            "rmse",
-            "wape",
-            "summ_error_3month",
-            "product_name",
-            "region",
-        ],
-    )
-    return df
+def get_demo_products_regions():
+    """Return demo products and regions for fallback"""
+    return ["Candy A", "Candy B", "Candy C"], ["north", "south", "east", "west"]
 
 
 # ==========================
@@ -92,24 +39,37 @@ st.title("📊 Amiri Forecasting Dashboard")
 # ==========================
 # Данные
 # ==========================
-forecast_df = generate_data()
-metrics_df = generate_model_metrics()
+db_ok = test_connection()
+if db_ok:
+    try:
+        products, regions = fetch_products_and_regions()
+    except Exception:
+        products, regions = get_demo_products_regions()
+else:
+    products, regions = get_demo_products_regions()
 
 # ==========================
 # Фильтры (sidebar)
 # ==========================
 st.sidebar.header("Фильтры")
 
-product = st.sidebar.selectbox("Выберите продукт", forecast_df["product_name"].unique())
-region = st.sidebar.selectbox("Выберите регион", forecast_df["region"].unique())
+product = st.sidebar.selectbox("Выберите продукт", products)
+region = st.sidebar.selectbox("Выберите регион", regions)
 horizon = st.sidebar.slider("Горизонт прогноза (дней)", 1, 90, 30)
 
-filtered_df = forecast_df[
-    (forecast_df["product_name"] == product) & (forecast_df["region"] == region)
-].copy()
-
-# Ограничиваем горизонтом
-filtered_df = filtered_df.sort_values("date").tail(horizon)
+# Получаем данные
+if db_ok:
+    try:
+        filtered_df = fetch_forecast_vs_actual(product, region, horizon)
+        metrics_df = fetch_metrics(product, region)
+    except Exception:
+        st.warning("⚠️ Ошибка подключения к базе данных. Используйте демо-режим.")
+        filtered_df = pd.DataFrame()
+        metrics_df = pd.DataFrame()
+else:
+    st.info("ℹ️ База данных недоступна. Используйте демо-режим.")
+    filtered_df = pd.DataFrame()
+    metrics_df = pd.DataFrame()
 
 # ==========================
 # Вкладки
@@ -124,70 +84,94 @@ with tab1:
     else:
         today = datetime.today().date()
 
-        # Стили осей (чёткие подписи в тёмной теме)
-        x_axis = alt.X(
-            "date:T",
-            title="📅 Дата",
-            axis=alt.Axis(
-                labelFontSize=12,
-                titleFontSize=16,
-                titleColor="white",
-                labelColor="white",
-            ),
-        )
-        y_axis = alt.Y(
-            "y:Q",
-            title="📦 Продажи",
-            axis=alt.Axis(
-                labelFontSize=12,
-                titleFontSize=16,
-                titleColor="white",
-                labelColor="white",
-            ),
-        )
+        # Создаем Plotly график
+        fig = go.Figure()
 
-        # Факт
-        line_fact = (
-            alt.Chart(filtered_df.dropna(subset=["y"]))
-            .mark_line(color="steelblue")
-            .encode(x=x_axis, y=y_axis, tooltip=["date", "y"])
-        )
+        # Фактические данные
+        actual_data = filtered_df.dropna(subset=["y"])
+        if not actual_data.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=actual_data["date"],
+                    y=actual_data["y"],
+                    mode="lines+markers",
+                    name="Факт",
+                    line=dict(color="#1f77b4", width=3),
+                    marker=dict(size=4),
+                    hovertemplate="<b>Факт</b><br>Дата: %{x}<br>Продажи: %{y}<extra></extra>",
+                )
+            )
 
         # Прогноз
-        line_forecast = (
-            alt.Chart(filtered_df)
-            .mark_line(color="orange", strokeDash=[5, 5])
-            .encode(
-                x="date:T",
-                y=alt.Y("yhat:Q", title="📦 Продажи"),
-                tooltip=["date", "yhat"],
+        forecast_data = filtered_df.dropna(subset=["yhat"])
+        if not forecast_data.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=forecast_data["date"],
+                    y=forecast_data["yhat"],
+                    mode="lines+markers",
+                    name="Прогноз",
+                    line=dict(color="#ff7f0e", width=3, dash="dash"),
+                    marker=dict(size=4),
+                    hovertemplate="<b>Прогноз</b><br>Дата: %{x}<br>Продажи: %{y}<extra></extra>",
+                )
             )
+
+            # Доверительный интервал
+            if not forecast_data.dropna(subset=["yhat_lower", "yhat_upper"]).empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=forecast_data["date"],
+                        y=forecast_data["yhat_upper"],
+                        mode="lines",
+                        line=dict(width=0),
+                        showlegend=False,
+                        hoverinfo="skip",
+                    )
+                )
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=forecast_data["date"],
+                        y=forecast_data["yhat_lower"],
+                        mode="lines",
+                        line=dict(width=0),
+                        fill="tonexty",
+                        fillcolor="rgba(255, 127, 14, 0.2)",
+                        name="Доверительный интервал",
+                        hoverinfo="skip",
+                    )
+                )
+
+        # Настройка макета
+        fig.update_layout(
+            title=f"Прогноз vs Факт для {product} ({region})",
+            xaxis_title="Дата",
+            yaxis_title="Продажи",
+            template="plotly_white",
+            height=500,
+            hovermode="x unified",
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+            ),
+            xaxis=dict(
+                showgrid=True,
+                gridwidth=1,
+                gridcolor="lightgray",
+                tickformat="%d %b",
+                # Показывать только даты где есть данные
+                range=[filtered_df["date"].min(), filtered_df["date"].max()],
+                # Уменьшаем количество тиков
+                nticks=8,
+            ),
+            yaxis=dict(showgrid=True, gridwidth=1, gridcolor="lightgray"),
         )
 
-        # Интервал прогноза
-        band = (
-            alt.Chart(filtered_df)
-            .mark_area(opacity=0.2, color="orange")
-            .encode(x="date:T", y="yhat_lower:Q", y2="yhat_upper:Q")
-        )
-
-        # Вертикальная линия «сегодня»
-        today_rule = (
-            alt.Chart(pd.DataFrame({"date": [today]}))
-            .mark_rule(strokeDash=[2, 2], color="red")
-            .encode(x="date:T")
-        )
-
-        # Комбинируем
-        chart = (line_fact + line_forecast + band + today_rule).properties(
-            width=900, height=400
-        )
-
-        st.altair_chart(chart, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Таблица
         st.subheader("Таблица прогнозов")
-        st.dataframe(filtered_df, use_container_width=True)
+        st.dataframe(filtered_df, width="stretch")
 
         # Скачивание CSV
         st.download_button(
@@ -210,14 +194,19 @@ with tab1:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+
 with tab2:
     st.subheader("Метрики модели")
 
-    metrics_filtered = metrics_df[
-        (metrics_df["product_name"] == product) & (metrics_df["region"] == region)
-    ]
+    metrics_filtered = (
+        metrics_df[
+            (metrics_df["product_name"] == product) & (metrics_df["region"] == region)
+        ]
+        if not metrics_df.empty
+        else metrics_df
+    )
 
     if metrics_filtered.empty:
         st.warning("⚠️ Нет метрик для выбранной комбинации.")
     else:
-        st.dataframe(metrics_filtered, use_container_width=True)
+        st.dataframe(metrics_filtered, width="stretch")
