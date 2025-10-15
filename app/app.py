@@ -143,45 +143,48 @@ with tab1:
             )
 
         # Прогноз (наложение на прошлое + будущее до горизонта)
-        if show_forecast and not forecast_vis.empty:
+# Прогноз (только будущее)
+if show_forecast and not forecast_vis.empty:
+    forecast_future = forecast_vis[forecast_vis["date"] > today]
+
+    if not forecast_future.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=forecast_future["date"],
+                y=forecast_future["yhat"],
+                mode="lines+markers",
+                name="Прогноз",
+                line=dict(color="#ff7f0e", width=3, dash="dash"),
+                marker=dict(size=4),
+                hovertemplate="<b>Дата:</b> %{x|%d %b %Y}<br><b>Продажи (прогноз):</b> %{y:.0f}<extra></extra>",
+            )
+        )
+
+        # Доверительный интервал (только для будущего)
+        ci = forecast_future.dropna(subset=["yhat_lower", "yhat_upper"])
+        if not ci.empty:
             fig.add_trace(
                 go.Scatter(
-                    x=forecast_vis["date"],
-                    y=forecast_vis["yhat"],
-                    mode="lines+markers",
-                    name="Прогноз",
-                    line=dict(color="#ff7f0e", width=3, dash="dash"),
-                    marker=dict(size=4),
-                    hovertemplate="<b>Дата:</b> %{x|%d %b %Y}<br><b>Продажи (прогноз):</b> %{y:.0f}<extra></extra>",
+                    x=ci["date"],
+                    y=ci["yhat_upper"],
+                    mode="lines",
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo="skip",
                 )
             )
-
-            # Доверительный интервал (там, где есть границы)
-            ci = forecast_vis.dropna(subset=["yhat_lower", "yhat_upper"])
-            if not ci.empty:
-                fig.add_trace(
-                    go.Scatter(
-                        x=ci["date"],
-                        y=ci["yhat_upper"],
-                        mode="lines",
-                        line=dict(width=0),
-                        showlegend=False,
-                        hoverinfo="skip",
-                    )
+            fig.add_trace(
+                go.Scatter(
+                    x=ci["date"],
+                    y=ci["yhat_lower"],
+                    mode="lines",
+                    line=dict(width=0),
+                    fill="tonexty",
+                    fillcolor="rgba(255, 127, 14, 0.2)",
+                    name="Доверительный интервал",
+                    hoverinfo="skip",
                 )
-                fig.add_trace(
-                    go.Scatter(
-                        x=ci["date"],
-                        y=ci["yhat_lower"],
-                        mode="lines",
-                        line=dict(width=0),
-                        fill="tonexty",
-                        fillcolor="rgba(255, 127, 14, 0.2)",
-                        name="Доверительный интервал",
-                        hoverinfo="skip",
-                    )
-                )
-
+            )
         # Вертикальная линия "Сегодня"
         fig.add_shape(
             type="line",
