@@ -63,7 +63,7 @@ def generate_model_metrics():
 # Настройки страницы
 # ==========================
 st.set_page_config(
-    page_title="Панель прогнозирования Амири",
+    page_title="Платформа прогнозирование спроса",
     layout="wide",
     initial_sidebar_state="expanded",
 )
